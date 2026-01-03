@@ -25,8 +25,25 @@ $donneesFormulaire = [
     'ville' => '',
     'telephone' => '',
     'courriel' => '',
-    'dateNaissance' => ''
+    'dateNaissance' => '',
+    'parentAdherent' => '',
+    'natureLien' => ''
 ];
+
+// ============================================
+// RÉCUPÉRATION DE LA LISTE DES ADHÉRENTS (pour la parenté)
+// ============================================
+
+try {
+    $requeteAdherents = $pdo->query('
+        SELECT Num_Adherent, Nom, Prenom 
+        FROM ADHERENT 
+        ORDER BY Nom, Prenom
+    ');
+    $listeAdherentsExistants = $requeteAdherents->fetchAll();
+} catch (PDOException $exception) {
+    $listeAdherentsExistants = [];
+}
 
 // ============================================
 // MODE MODIFICATION : Récupération des données
@@ -79,7 +96,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'ville' => trim($_POST['ville'] ?? ''),
         'telephone' => trim($_POST['telephone'] ?? ''),
         'courriel' => trim($_POST['courriel'] ?? ''),
-        'dateNaissance' => trim($_POST['dateNaissance'] ?? '')
+        'dateNaissance' => trim($_POST['dateNaissance'] ?? ''),
+        'parentAdherent' => isset($_POST['parentAdherent']) ? (int) $_POST['parentAdherent'] : '',
+        'natureLien' => trim($_POST['natureLien'] ?? '')
     ];
     
     // Récupération du numéro en cas de modification
@@ -183,7 +202,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'dateNaissance' => $dateNaissance
                 ]);
                 
-                $messageAlerte = afficherAlerte('Adhérent ajouté avec succès.', 'success');
+                // Récupérer l'ID du nouvel adhérent
+                $nouvelAdherentId = $pdo->lastInsertId();
+                
+                // ============================================
+                // INSERTION DU LIEN DE PARENTÉ (si sélectionné)
+                // ============================================
+                
+                $messageParente = '';
+                if (!empty($donneesFormulaire['parentAdherent']) && !empty($donneesFormulaire['natureLien'])) {
+                    $parentId = (int) $donneesFormulaire['parentAdherent'];
+                    $natureLien = $donneesFormulaire['natureLien'];
+                    
+                    // Insertion du lien : Parent -> Nouvel adhérent
+                    $requeteParente = $pdo->prepare('
+                        INSERT INTO PARENTE (Num_Adherent_1, Num_Adherent_2, Nature)
+                        VALUES (:numAdherent1, :numAdherent2, :nature)
+                    ');
+                    $requeteParente->execute([
+                        'numAdherent1' => $parentId,
+                        'numAdherent2' => $nouvelAdherentId,
+                        'nature' => $natureLien
+                    ]);
+                    
+                    // Récupérer le nom du parent pour le message
+                    $requeteNomParent = $pdo->prepare('SELECT Nom, Prenom FROM ADHERENT WHERE Num_Adherent = :id');
+                    $requeteNomParent->execute(['id' => $parentId]);
+                    $parentInfo = $requeteNomParent->fetch();
+                    
+                    $messageParente = ' Lien de parenté créé avec ' . $parentInfo['Prenom'] . ' ' . $parentInfo['Nom'] . ' (' . $natureLien . ').';
+                }
+                
+                $messageAlerte = afficherAlerte('Adhérent ajouté avec succès.' . $messageParente, 'success');
                 
                 // Réinitialisation du formulaire après ajout
                 $donneesFormulaire = [
@@ -194,7 +244,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'ville' => '',
                     'telephone' => '',
                     'courriel' => '',
-                    'dateNaissance' => ''
+                    'dateNaissance' => '',
+                    'parentAdherent' => '',
+                    'natureLien' => ''
                 ];
             }
             
@@ -354,6 +406,77 @@ require_once 'header.php';
                     <?php endif; ?>
                 </div>
             </div>
+            
+            <?php if (!$modeModification && count($listeAdherentsExistants) > 0): ?>
+            <!-- Section Lien de Parenté -->
+            <hr>
+            <div class="card bg-light mb-3">
+                <div class="card-header">
+                    <i class="bi bi-people-fill"></i> Lien de Parenté <span class="text-muted">(Optionnel)</span>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">
+                        <i class="bi bi-info-circle"></i> 
+                        Si ce nouvel adhérent a un lien de parenté avec un adhérent existant, vous pouvez l'indiquer ici.
+                    </p>
+                    
+                    <div class="row">
+                        <!-- Sélection de l'adhérent parent -->
+                        <div class="col-md-6 mb-3">
+                            <label for="parentAdherent" class="form-label">Adhérent lié</label>
+                            <select class="form-select" 
+                                    id="parentAdherent" 
+                                    name="parentAdherent"
+                                    onchange="toggleNatureLien()">
+                                <option value="">-- Aucun lien --</option>
+                                <?php foreach ($listeAdherentsExistants as $adherentExistant): ?>
+                                    <option value="<?php echo $adherentExistant['Num_Adherent']; ?>"
+                                            <?php echo $donneesFormulaire['parentAdherent'] == $adherentExistant['Num_Adherent'] ? 'selected' : ''; ?>>
+                                        <?php echo echapper($adherentExistant['Nom'] . ' ' . $adherentExistant['Prenom']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <!-- Nature du lien -->
+                        <div class="col-md-6 mb-3" id="divNatureLien">
+                            <label for="natureLien" class="form-label">Nature du lien</label>
+                            <select class="form-select" 
+                                    id="natureLien" 
+                                    name="natureLien">
+                                <option value="">-- Sélectionnez --</option>
+                                <option value="Conjoint" <?php echo $donneesFormulaire['natureLien'] === 'Conjoint' ? 'selected' : ''; ?>>Conjoint(e)</option>
+                                <option value="Parent" <?php echo $donneesFormulaire['natureLien'] === 'Parent' ? 'selected' : ''; ?>>Parent</option>
+                                <option value="Enfant" <?php echo $donneesFormulaire['natureLien'] === 'Enfant' ? 'selected' : ''; ?>>Enfant</option>
+                                <option value="Frère" <?php echo $donneesFormulaire['natureLien'] === 'Frère' ? 'selected' : ''; ?>>Frère</option>
+                                <option value="Soeur" <?php echo $donneesFormulaire['natureLien'] === 'Soeur' ? 'selected' : ''; ?>>Sœur</option>
+                                <option value="Autre" <?php echo $donneesFormulaire['natureLien'] === 'Autre' ? 'selected' : ''; ?>>Autre</option>
+                            </select>
+                            <div class="form-text">Quel est le lien de l'adhérent sélectionné avec le nouvel adhérent ?</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <script>
+            function toggleNatureLien() {
+                var parentSelect = document.getElementById('parentAdherent');
+                var natureLienDiv = document.getElementById('divNatureLien');
+                var natureLienSelect = document.getElementById('natureLien');
+                
+                if (parentSelect.value === '') {
+                    natureLienDiv.style.opacity = '0.5';
+                    natureLienSelect.disabled = true;
+                    natureLienSelect.value = '';
+                } else {
+                    natureLienDiv.style.opacity = '1';
+                    natureLienSelect.disabled = false;
+                }
+            }
+            // Exécuter au chargement de la page
+            document.addEventListener('DOMContentLoaded', toggleNatureLien);
+            </script>
+            <?php endif; ?>
             
             <hr>
             
