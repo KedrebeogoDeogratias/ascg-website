@@ -3,6 +3,10 @@
 -- Date: 2026-01-02
 -- ============================================
 
+-- Définir l'encodage UTF-8 pour les caractères accentués
+SET NAMES utf8mb4;
+SET CHARACTER SET utf8mb4;
+
 -- Suppression de la base si elle existe et création
 DROP DATABASE IF EXISTS association_sportive;
 CREATE DATABASE association_sportive CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
